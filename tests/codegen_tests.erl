@@ -1,101 +1,46 @@
 -module(codegen_tests).
 
-
 -include_lib("eunit/include/eunit.hrl").
 
 
 
-%% HELPERS
+expect_test_to_yield(Expected, File) ->
+    Path = "tests/test-files/" ++ File ++ ".elm.erlx",
 
+    { ok, Erlx } = file:read_file(Path),
+    { ok, Tokens, _ } = erl_scan:string(binary_to_list(Erlx)),
+    { ok, Abs } = erl_parse:parse_exprs(Tokens),
+    { value, Defs, _ } = erl_eval:exprs(Abs, []),
 
--define(ELM_MODULE, {'ModuleName', <<"elm-lang">>, <<"core">>, <<"Main">>}).
+    ElmModule = { 'ModuleName', <<"elm-lang">>, <<"core">>, <<"Main">> },
+    TestFunction = cerl:c_fname('elm-lang@core@Main@test', 0),
+    SyntheticTest = { cerl:c_fname(test, 0),
+                      cerl:c_fun([], cerl:c_apply(TestFunction, []))
+                    },
 
--define(SYNTHETIC_MAIN,
-        { cerl:c_fname(main, 0),
-          cerl:c_fun([],
-                     cerl:c_apply(cerl:c_fname('elm-lang@core@Main@main', 0),
-                                  []
-                                 )
-                    )
-        }).
-
-
-expect_main_to_yield(Expected, Defs) ->
-    { MainName, _ } = Main = ?SYNTHETIC_MAIN,
-    Functions = [ Main | codegen:make_forms(?ELM_MODULE, Defs) ],
+    { MainName, _ } = Main = SyntheticTest,
+    Functions = [ Main | codegen:make_forms(ElmModule, Defs) ],
     CModule = cerl:c_module(cerl:c_atom(elm), [ MainName ], [], Functions),
     { ok, _, Bin } = compile:forms(CModule, [ report, verbose, from_core ]),
     { module, Module } = code:load_binary(elm, "elm.beam", Bin),
 
-    ?assertEqual(Expected, Module:main()),
+    ?assertEqual(Expected, Module:test()),
 
     code:delete(Module).
 
 
 
-%% TESTS
+int_test() ->
+    expect_test_to_yield(5, "Int").
 
+float_test() ->
+    expect_test_to_yield(25.0, "Float").
 
-simple_integer_test() ->
-    Defs = [ { 'Def',
-               { 'PVar', <<"main">> },
-               { 'ELit', { 'IntNum', 5 } }
-             }
-           ],
+string_test() ->
+    expect_test_to_yield(<<"Hello, World">>, "String").
 
-    expect_main_to_yield(5, Defs).
+chars_list_test() ->
+    expect_test_to_yield([$a, $b, $c], "CharList").
 
-
-simple_float_test() ->
-    Defs = [ { 'Def',
-               { 'PVar', <<"main">> },
-               { 'ELit', { 'FloatNum', 25.0 } }
-             }
-           ],
-
-    expect_main_to_yield(25.0, Defs).
-
-
-simple_string_test() ->
-    Defs = [ { 'Def',
-               { 'PVar', <<"main">> },
-               { 'ELit', { 'Str', <<"Hello, World">> } }
-             }
-           ],
-
-    expect_main_to_yield(<<"Hello, World">>, Defs).
-
-
-simple_list_of_chars_test() ->
-    Defs = [ { 'Def',
-               { 'PVar', <<"main">> },
-               { 'List',
-                 [ { 'ELit', { 'Chr', <<"a">> } },
-                   { 'ELit', { 'Chr', <<"b">> } },
-                   { 'ELit', { 'Chr', <<"c">> } }
-                 ]
-               }
-             }
-           ],
-
-    expect_main_to_yield([$a, $b, $c], Defs).
-
-
-local_function_call_test() ->
-    Defs = [ { 'Def',
-               { 'PVar', <<"id">> },
-               { 'Lambda', { 'PVar', <<"value">> },
-                 { 'EVar', { 'Variable', { 'Local' }, <<"value">> }}
-               }
-             },
-             { 'Def',
-               { 'PVar', <<"main">> },
-               { 'App',
-                 { 'EVar', { 'Variable', { 'TopLevel', ?ELM_MODULE }, <<"id">> }
-                 },
-                 { 'ELit', {'Boolean','true'} }
-               }
-             }
-           ],
-
-    expect_main_to_yield(true, Defs).
+id_test() ->
+    expect_test_to_yield(true, "Id").

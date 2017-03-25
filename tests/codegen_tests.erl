@@ -84,7 +84,18 @@ simple_list_of_chars_test() ->
 local_function_call_test() ->
     Defs = [ { 'Def',
                { 'PVar', <<"id">> },
-               {'Binop', { 'PVar',<<"value">>},{'EVar',{'Variable',{'Local'},<<"value">>}}}},{'Def',{'PVar',<<"test">>},{'App',{'EVar',{'Variable',{'TopLevel',{'ModuleName',<<"elm-lang">>,<<"core">>,<<"Test">>}},<<"id">>}},{'ELit',{'Boolean','true'}}}}
+               { 'Lambda', { 'PVar', <<"value">> },
+                 { 'EVar', { 'Variable', { 'Local' }, <<"value">> }}
+               }
+             },
+             { 'Def',
+               { 'PVar', <<"main">> },
+               { 'App',
+                 { 'EVar', { 'Variable', { 'TopLevel', ?ELM_MODULE }, <<"id">> }
+                 },
+                 { 'ELit', {'Boolean','true'} }
+               }
+             }
            ],
 
     expect_main_to_yield(true, Defs).

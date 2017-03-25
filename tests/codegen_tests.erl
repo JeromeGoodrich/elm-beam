@@ -10,25 +10,26 @@
 
 -define(ELM_MODULE, {'ModuleName', <<"elm-lang">>, <<"core">>, <<"Main">>}).
 
--define(MAIN_FUNCTION, 'elm-lang@core@Main@main').
+-define(SYNTHETIC_MAIN,
+        { cerl:c_fname(main, 0),
+          cerl:c_fun([],
+                     cerl:c_apply(cerl:c_fname('elm-lang@core@Main@main', 0),
+                                  []
+                                 )
+                    )
+        }).
 
 
-map_compiled(Callback, Defs) ->
-    { MainName, MainBody } = Main = synthetic_main(),
+expect_main_to_yield(Expected, Defs) ->
+    { MainName, _ } = Main = ?SYNTHETIC_MAIN,
     Functions = [ Main | codegen:make_forms(?ELM_MODULE, Defs) ],
     CModule = cerl:c_module(cerl:c_atom(elm), [ MainName ], [], Functions),
     { ok, _, Bin } = compile:forms(CModule, [ report, verbose, from_core ]),
     { module, Module } = code:load_binary(elm, "elm.beam", Bin),
 
-    Callback(Module),
+    ?assertEqual(Expected, Module:main()),
 
-    true = code:delete(Module).
-
-
-synthetic_main() ->
-    { cerl:c_fname(main, 0),
-      cerl:c_fun([], cerl:c_apply(cerl:c_fname(?MAIN_FUNCTION, 0), []))
-    }.
+    code:delete(Module).
 
 
 
@@ -42,8 +43,49 @@ simple_integer_test() ->
              }
            ],
 
-    Test = fun (Module) ->
-                   ?assertEqual(5, Module:main())
-           end,
+    expect_main_to_yield(5, Defs).
 
-    map_compiled(Test, Defs).
+
+simple_float_test() ->
+    Defs = [ { 'Def',
+               { 'PVar', <<"main">> },
+               { 'ELit', { 'FloatNum', 25.0 } }
+             }
+           ],
+
+    expect_main_to_yield(25.0, Defs).
+
+
+simple_bool_test() ->
+    Defs = [ { 'Def',
+               { 'PVar', <<"main">> },
+               { 'ELit', { 'Boolean', 'true' } }
+             }
+           ],
+
+    expect_main_to_yield(true, Defs).
+
+
+simple_string_test() ->
+    Defs = [ { 'Def',
+               { 'PVar', <<"main">> },
+               { 'ELit', { 'Str', <<"Hello, World">> } }
+             }
+           ],
+
+    expect_main_to_yield(<<"Hello, World">>, Defs).
+
+
+simple_list_of_chars_test() ->
+    Defs = [ { 'Def',
+               { 'PVar', <<"main">> },
+               { 'List',
+                 [ { 'ELit', { 'Chr', <<"a">> } },
+                   { 'ELit', { 'Chr', <<"b">> } },
+                   { 'ELit', { 'Chr', <<"c">> } }
+                 ]
+               }
+             }
+           ],
+
+    expect_main_to_yield([$a, $b, $c], Defs).

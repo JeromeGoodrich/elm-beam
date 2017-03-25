@@ -4,16 +4,16 @@
 
 
 make_forms(ElmMod, Defs) ->
-    lists:map(fun (Def) -> to_function(ElmMod, Def) end, Defs).
+    lists:map(fun (Def) -> from_def(ElmMod, Def) end, Defs).
 
 
 
 %% TOP-LEVEL
 
 
-to_function(ModuleName, {'Def', {'PVar', Name}, Body}) ->
+from_def(ModuleName, {'Def', {'PVar', Name}, Body}) ->
     { cerl:c_fname(qualifed_var(ModuleName, Name), 0),
-      cerl:c_fun([], to_expr(Body))
+      cerl:c_fun([], from_expr(Body))
     }.
 
 
@@ -21,11 +21,30 @@ to_function(ModuleName, {'Def', {'PVar', Name}, Body}) ->
 %% EXPRESSIONS
 
 
-to_expr({'ELit', Literal}) -> literal(Literal).
+from_expr({'ELit', Literal}) -> from_literal(Literal);
+from_expr({'List', Elems}) ->
+    F = fun(E, Acc) ->
+                cerl:c_cons(from_expr(E), Acc)
+        end,
+
+    lists:foldr(F, cerl:c_nil(), Elems).
 
 
 
-literal({'IntNum', N}) -> cerl:c_int(N).
+from_literal({'Boolean', A}) -> cerl:c_atom(A);
+from_literal({'IntNum', N}) -> cerl:c_int(N);
+from_literal({'FloatNum', N}) -> cerl:c_float(N);
+from_literal({'Chr', <<C, _/binary>>}) -> cerl:c_char(C);
+from_literal({'Str', Bin}) ->
+    F = fun(I) ->
+                cerl:c_bitstr(
+                  cerl:c_int(I), cerl:c_int(8), cerl:c_int(1),
+                  cerl:c_atom(integer),
+                  cerl:c_cons(cerl:c_atom(unsigned),
+                              cerl:c_cons(cerl:c_atom(big), cerl:c_nil())))
+        end,
+
+    cerl:c_binary([F(I) || I <- binary_to_list(Bin)]).
 
 
 

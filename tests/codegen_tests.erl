@@ -56,16 +56,6 @@ simple_float_test() ->
     expect_main_to_yield(25.0, Defs).
 
 
-simple_bool_test() ->
-    Defs = [ { 'Def',
-               { 'PVar', <<"main">> },
-               { 'ELit', { 'Boolean', 'true' } }
-             }
-           ],
-
-    expect_main_to_yield(true, Defs).
-
-
 simple_string_test() ->
     Defs = [ { 'Def',
                { 'PVar', <<"main">> },
@@ -89,3 +79,12 @@ simple_list_of_chars_test() ->
            ],
 
     expect_main_to_yield([$a, $b, $c], Defs).
+
+
+local_function_call_test() ->
+    Defs = [ { 'Def',
+               { 'PVar', <<"id">> },
+               {'Binop', { 'PVar',<<"value">>},{'EVar',{'Variable',{'Local'},<<"value">>}}}},{'Def',{'PVar',<<"test">>},{'App',{'EVar',{'Variable',{'TopLevel',{'ModuleName',<<"elm-lang">>,<<"core">>,<<"Test">>}},<<"id">>}},{'ELit',{'Boolean','true'}}}}
+           ],
+
+    expect_main_to_yield(true, Defs).

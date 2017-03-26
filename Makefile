@@ -1,3 +1,5 @@
+.PHONY: bootstrap test
+
 test:
 	@for elm in tests/test-files/*.elm; do elm-beam-bootstrap $$elm; done
 	@mkdir -p ebin
@@ -7,5 +9,5 @@ test:
 		-run init stop
 
 bootstrap:
-	git submodule update
+	git submodule update --init
 	cd bootstrap && stack install

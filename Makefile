@@ -1,7 +1,7 @@
 .PHONY: bootstrap test
 
 test:
-	@for elm in tests/test-files/*.elm; do elm-beam-bootstrap $$elm; done
+	@elm-beam-bootstrap tests/test-files
 	@mkdir -p ebin
 	@erlc -o ebin src/*.erl tests/*.erl
 	@erl -noshell -pa ebin \

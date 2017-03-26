@@ -36,10 +36,10 @@ collectLambdas(Env, Body, Acc) ->
 %% EXPRESSIONS
 
 
-from_expr(Env, {'ELit', Literal}) ->
+from_expr(_, {'ELit', Literal}) ->
     from_literal(Literal);
 
-from_expr(Env, {'EVar', Var}) ->
+from_expr(_, {'EVar', Var}) ->
     from_var(Var);
 
 from_expr(Env, {'Binop', Var, Left, Right}) ->

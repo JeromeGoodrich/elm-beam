@@ -3,7 +3,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 
-
 expect_test_to_yield(Expected, File) ->
     Path = "tests/test-files/" ++ File ++ ".elm.erlx",
 
@@ -13,20 +12,14 @@ expect_test_to_yield(Expected, File) ->
     { value, Defs, _ } = erl_eval:exprs(Abs, []),
 
     ElmModule = { 'ModuleName', <<"elm-lang">>, <<"core">>, <<"Main">> },
-    TestFunction = cerl:c_fname('elm-lang@core@Main@test', 0),
-    SyntheticTest = { cerl:c_fname(test, 0),
-                      cerl:c_fun([], cerl:c_apply(TestFunction, []))
-                    },
+    TestName = cerl:c_fname('elm-lang@core@Main@test', 0),
+    Functions = codegen:make_forms(ElmModule, Defs),
+    CModule = cerl:c_module(cerl:c_atom(elm), [ TestName ], [], Functions),
 
-    { MainName, _ } = Main = SyntheticTest,
-    Functions = [ Main | codegen:make_forms(ElmModule, Defs) ],
-    CModule = cerl:c_module(cerl:c_atom(elm), [ MainName ], [], Functions),
     { ok, _, Bin } = compile:forms(CModule, [ report, verbose, from_core ]),
     { module, Module } = code:load_binary(elm, "elm.beam", Bin),
 
-    ?assertEqual(Expected, Module:test()),
-
-    code:delete(Module).
+    ?assertEqual(Expected, Module:'elm-lang@core@Main@test'()).
 
 
 

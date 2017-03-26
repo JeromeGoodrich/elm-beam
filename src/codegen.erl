@@ -12,8 +12,9 @@ make_forms(ElmMod, Defs) ->
 
 
 from_def(ModuleName, {'Def', {'PVar', Name}, Body}) ->
+    { _, F } = from_expr(new_env(), Body),
     { cerl:c_fname(qualifed_name(ModuleName, Name), 0),
-      cerl:c_fun([], from_expr(Body))
+      cerl:c_fun([], F)
     }.
 
 
@@ -21,28 +22,43 @@ from_def(ModuleName, {'Def', {'PVar', Name}, Body}) ->
 %% EXPRESSIONS
 
 
-from_expr({'ELit', Literal}) ->
-    from_literal(Literal);
+from_expr(Env, {'ELit', Literal}) ->
+    { Env, from_literal(Literal) };
 
-from_expr({'EVar', Var}) ->
-    from_var(Var);
+from_expr(Env, {'EVar', Var}) ->
+    { Env, from_var(Var) };
 
-from_expr({'Lambda', Function, Body}) ->
-    cerl:c_fun([from_pattern(Function)], from_expr(Body));
+from_expr(Env, {'Binop', Var, Left, Right}) ->
+    { Env1, L } = from_expr(Env, Left),
+    { Env2, R } = from_expr(Env1, Right),
+    { Env2, cerl:c_apply(cerl:c_apply(from_var(Var), [L]), [R]) };
 
-from_expr({'App', Function, Arg}) ->
-    cerl:c_apply(from_expr(Function), [from_expr(Arg)]);
+from_expr(Env, {'Lambda', Pattern, Body}) ->
+    { Env1, P } = from_pattern(Env, Pattern),
+    { Env2, B } = from_expr(Env1, Body),
+    { Env2, cerl:c_fun([P], B) };
 
-from_expr({'List', Elems}) ->
+from_expr(Env, {'App', Function, Arg}) ->
+    { Env1, F } = from_expr(Env, Function),
+    { Env2, A } = from_expr(Env1, Arg),
+    { Env2, cerl:c_apply(F, [A]) };
+
+from_expr(Env, {'List', Elems}) ->
     F = fun(E, Acc) ->
-                cerl:c_cons(from_expr(E), Acc)
+                { _, Expr } = from_expr(Env, E),
+                cerl:c_cons(Expr, Acc)
         end,
 
-    lists:foldr(F, cerl:c_nil(), Elems).
+    { Env, lists:foldr(F, cerl:c_nil(), Elems) }.
 
 
-from_pattern({'PVar', Name}) ->
-    cerl:c_var(binary_to_atom(Name, utf8)).
+
+from_pattern(Env, {'Anything'}) ->
+    fresh_var(Env);
+
+from_pattern(Env, {'PVar', Name}) ->
+    { Env, cerl:c_var(binary_to_atom(Name, utf8)) }.
+
 
 
 from_var({'Variable', {'TopLevel', Home}, Name}) ->
@@ -50,6 +66,7 @@ from_var({'Variable', {'TopLevel', Home}, Name}) ->
 
 from_var({'Variable', {'Local'} , Name}) ->
     cerl:c_var(binary_to_atom(Name, utf8)).
+
 
 
 from_literal({'Boolean', A}) ->
@@ -78,6 +95,14 @@ from_literal({'Str', Bin}) ->
 
 
 %% HELPERS
+
+
+new_env() ->
+    1.
+
+
+fresh_var(Env) ->
+    { Env + 1, cerl:c_var(Env) }.
 
 
 qualifed_name(ModuleName, Name) ->

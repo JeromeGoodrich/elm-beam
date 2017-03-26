@@ -44,3 +44,6 @@ chars_list_test() ->
 
 id_test() ->
     expect_test_to_yield(true, "Id").
+
+negatives_test() ->
+    expect_test_to_yield(0, "Negatives").

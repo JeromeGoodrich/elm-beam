@@ -42,13 +42,8 @@ from_expr(_, {'ELit', Literal}) ->
 from_expr(_, {'EVar', Var}) ->
     from_var(Var);
 
-from_expr(Env, {'Binop', Var, Left, Right}) ->
-    Op = case Var of
-            {'Variable', {'TopLevel', Home}, Name} ->
-                cerl:c_var({ qualifed_name(Home, Name), 2 });
-            {'Variable', {'Module', Home}, Name} ->
-                cerl:c_var({ qualifed_name(Home, Name), 2 })
-        end,
+from_expr(Env, {'Binop', {'Variable', {_, Home}, Name}, Left, Right}) ->
+    Op = cerl:c_var({ qualifed_name(Home, Name), 2 }),
     cerl:c_apply(Op, [from_expr(Env, Left), from_expr(Env, Right)]);
 
 from_expr(Env, {'Lambda', Pattern, Body}) ->
@@ -74,7 +69,7 @@ from_pattern(Env, {'PVar', Name}) ->
 
 
 
-from_var({'Variable', {'TopLevel', Home}, Name}) ->
+from_var({'Variable', {_, Home}, Name}) ->
     cerl:c_apply(cerl:c_var({ qualifed_name(Home, Name), 0 }), []);
 
 from_var({'Variable', {'Local'} , Name}) ->

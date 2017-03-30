@@ -1,4 +1,0 @@
-[submodule "bootstrap"]
-	path = bootstrap
-	url = git@github.com:hkgumbs/elm-compiler
-	branch = dev

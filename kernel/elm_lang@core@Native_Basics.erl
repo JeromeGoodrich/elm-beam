@@ -2,8 +2,8 @@
 
 -export([add/2]).
 
-add(_a, _b) ->
-  _a + _b.
+add(A, B) ->
+  A + B.
 
 %%/import Native.Utils //
 %%

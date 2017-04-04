@@ -1,8 +1,9 @@
 import Platform
 import List exposing (..)
+import Basics exposing (..)
 
 main : Platform.Program () () ()
-main = assert consTest
+main = assert foldrTest
 -- main = assert [consTest, foldrTest, map2Test, map2Test2] []
 
 consTest =
@@ -12,7 +13,7 @@ consTest =
     case i of
       [1,2,3] -> 0
       _ -> 1
-{-
+
 foldrTest =
   let
     result = foldr (+) 0 [1,2,3]
@@ -36,7 +37,7 @@ map2Test2 =
     case result of
       [(1,'a'),(2,'b')] -> 0
       _ -> 1
--}
+
 
 assert: number -> Platform.Program () () ()
 assert i =

@@ -1,23 +1,21 @@
 -module(elm_lang@core@Native_List).
 
--export([cons/2]).
+-export([cons/2, foldr/3, map2/3]).
 
 cons(Head, Tail) ->
   {'::', Head, Tail}.
 
-foldr(_func, _acc, _list) ->
-  lists:foldr(fun(A, B) -> (_func(A))(B) end, _acc, _list).
+foldr(Func, Acc, List) ->
+  lists:foldr(fun(A, B) -> (Func(A))(B) end, Acc, toErlangList(List,[])).
 
-map2(Func, ListA, ListB) when length(ListA) > length(ListB) ->
-      NewListA = lists:sublist(ListA, length(ListB)),
-      lists:zipwith(fun(A, B) -> (Func(A))(B) end, NewListA , ListB);
-map2(Func, ListA, ListB) when length(ListA) < length(ListB) ->
-      NewListB = lists:sublist(ListB, length(ListA)),
-      lists:zipwith(fun(A, B) -> (Func(A))(B) end, ListA, NewListB);
-map2(Func, ListA, ListB) when length(ListA) =:= length(ListB) ->
-      lists:zipwith(fun(A, B) -> (Func(A))(B) end, ListA, ListB).
+map2(Zip, { '::', H1, T1 }, { '::', H2, T2 }) ->
+  { '::', (Zip(H1))(H2), map2(Zip, T1, T2)};
+map2(_,_,_) -> { '[]' }.
 
-
+toErlangList({ '::', H, T }, Result) ->
+  NewResult = [H|Result],
+  toErlangList(T, NewResult);
+toErlangList({ '[]' }, Result) -> Result.
 
 %%var _elm_lang$core$Native_List = function() {
 %%

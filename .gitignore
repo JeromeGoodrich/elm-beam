@@ -1,4 +1,5 @@
 elm-stuff/
+_build/
 .stack-work/
 *.beam
 *.core

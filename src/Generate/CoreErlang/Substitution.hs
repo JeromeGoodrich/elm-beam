@@ -1,4 +1,4 @@
-module Generate.ErlangCore.Substitution
+module Generate.CoreErlang.Substitution
   ( one, two, many
   , fresh
   ) where
@@ -8,7 +8,7 @@ import qualified Control.Monad.State as State
 import qualified Data.Text as Text
 import Data.Text (Text)
 
-import qualified Generate.ErlangCore.Builder as Core
+import qualified Generate.CoreErlang.Builder as Core
 
 
 
@@ -32,12 +32,12 @@ type Collector a
 substitute :: Core.Expr -> (Core.Literal -> a) -> Collector a
 substitute value use =
   case value of
-    Core.C constant ->
-      return (id, use constant)
+    Core.Lit literal ->
+      return (id, use literal)
 
     _ ->
       do  name <- fresh
-          return (Core.Let name value, use (Core.Literal (Core.Var name)))
+          return (Core.Let name value, use (Core.LTerm (Core.Var name)))
 
 
 

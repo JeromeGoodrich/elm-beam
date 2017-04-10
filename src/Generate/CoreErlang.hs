@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Generate.ErlangCore (generate) where
+module Generate.CoreErlang (generate) where
 
-import Control.Monad (foldM, zipWithM)
+import Control.Monad (foldM, liftM2)
 import qualified Control.Monad.State as State
 
 import qualified Data.ByteString.Builder as BS
@@ -13,10 +13,11 @@ import qualified AST.Variable as Var
 import qualified AST.Expression.Optimized as Opt
 import Elm.Compiler.Module (moduleToText, qualifiedVar)
 
-import qualified Generate.ErlangCore.Builder as Core
-import qualified Generate.ErlangCore.Constant as Const
-import qualified Generate.ErlangCore.Substitution as Subst
-import qualified Generate.ErlangCore.Pattern as Pattern
+import qualified Generate.CoreErlang.Builder as Core
+import qualified Generate.CoreErlang.BuiltIn as BuiltIn
+import qualified Generate.CoreErlang.Literal as Literal
+import qualified Generate.CoreErlang.Substitution as Subst
+import qualified Generate.CoreErlang.Pattern as Pattern
 
 
 generate :: Module.Module (Module.Info [Opt.Def]) -> BS.Builder
@@ -39,24 +40,20 @@ generateDef gen def =
       do  body' <-
             generateExpr body
 
-          let args' =
-                map (Core.Literal . Core.Var) args
-
-              appliedLetRec =
-                Core.Apply Core.FunctionRef name args'
-
-              letRec =
-                  Core.LetRec name args body'
-                    (foldr (\a -> Core.Fun [a]) appliedLetRec args)
+          let letRec =
+                Core.LetRec name args body'
+                  $ makeFun args
+                  $ Core.Apply (Core.LFunction name (length args))
+                  $ map (Core.LTerm . Core.Var) args
 
           return (gen name letRec)
 
 
 generateExpr :: Opt.Expr -> State.State Int Core.Expr
-generateExpr expr =
-  case expr of
+generateExpr opt =
+  case opt of
     Opt.Literal lit ->
-      return $ Core.C (Core.Literal (Const.literal lit))
+      return $ Core.Lit (Core.LTerm (Literal.term lit))
 
     Opt.Var var ->
       return $ generateVar var
@@ -68,18 +65,33 @@ generateExpr expr =
       generateCall (Opt.Var var) [lhs, rhs]
 
     Opt.Function args body ->
-      do  body' <- generateExpr body
-          return $ foldr (\a -> Core.Fun [a]) body' args
+      makeFun args <$> generateExpr body
 
     Opt.Call function args ->
       generateCall function args
 
     Opt.TailCall name _ args ->
-      Subst.many (Core.Apply Core.FunctionRef name) =<< mapM generateExpr args
+      let
+        function =
+          Core.LFunction name (length args)
+      in
+        Subst.many (Core.Apply function) =<< mapM generateExpr args
 
-    Opt.If _branches _else ->
-      error
-        "TODO: Opt.If to Core.Expr"
+    Opt.If branches finally ->
+      let
+        toBranch bool expr =
+          (Core.PTerm (Core.Atom bool), expr)
+
+        toCase (condition, ifTrue) ifFalse =
+          do  checks <-
+                sequence
+                  [ toBranch "true" <$> generateExpr ifTrue
+                  , toBranch "false" <$> ifFalse
+                  ]
+
+              Subst.one (flip Core.Case checks) =<< generateExpr condition
+      in
+        foldr toCase (generateExpr finally) branches
 
     Opt.Let defs body ->
       foldr
@@ -88,11 +100,11 @@ generateExpr expr =
         defs
 
     Opt.Case switch branches ->
-      do  bodies <-
-            mapM (generateExpr . snd) branches
+      do  let toCore (pattern, expr) =
+                liftM2 (,) (Pattern.match pattern) (generateExpr expr)
 
           branches' <-
-            zipWithM Pattern.match (map fst branches) bodies
+            mapM toCore branches
 
           Subst.one (flip Core.Case branches') =<< generateExpr switch
 
@@ -102,17 +114,21 @@ generateExpr expr =
     Opt.CtorAccess expr index ->
       Pattern.ctorAccess index =<< generateExpr expr
 
-    Opt.Access _record _field ->
-      error
-        "TODO: Opt.Access to Core.Expr"
+    Opt.Access record field ->
+      Subst.one (BuiltIn.get field) =<< generateExpr record
 
-    Opt.Update _record _fields ->
-      error
-        "TODO: Opt.Update to Core.Expr"
+    Opt.Update record fields ->
+      let
+        zipper literals =
+          Core.Update (zip (keys fields) (tail literals)) (head literals)
+      in
+        Subst.many zipper =<< mapM generateExpr (record : map snd fields)
 
-    Opt.Record _fields ->
-      error
-        "TODO: Opt.Record to Core.Expr"
+    Opt.Record fields ->
+      do  values <-
+            mapM (generateExpr . snd) fields
+
+          Subst.many (Core.Map . zip (keys fields)) values
 
     Opt.Cmd _moduleName ->
       error
@@ -131,11 +147,13 @@ generateExpr expr =
         "TODO: Opt.IncomingPort to Core.Expr"
 
     Opt.Program _type expr ->
+      -- TODO: use the type to decode argument
       generateExpr expr
 
     Opt.GLShader _ _ _ ->
+      -- TODO: should likely remove this from the AST
       error
-        "TODO: Opt.GLShader to Core.Expr"
+        "Shaders can't be used with the BEAM compiler!"
 
     Opt.Crash _moduleName _region _maybeExpr ->
       error
@@ -150,11 +168,11 @@ generateVar :: Var.Canonical -> Core.Expr
 generateVar (Var.Canonical home name) =
   let
     reference moduleName =
-      Core.Apply Core.FunctionRef (qualifiedVar moduleName name) []
+      Core.Apply (Core.LFunction (qualifiedVar moduleName name) 0) []
   in
     case home of
       Var.Local ->
-        Core.C (Core.Literal (Core.Var name))
+        Core.Lit (Core.LTerm (Core.Var name))
 
       Var.Module moduleName ->
         reference moduleName
@@ -178,16 +196,23 @@ generateCall function args =
           Subst.many (Core.Call (moduleToText moduleName) name) args'
 
         _ ->
-          flip (foldM (Subst.two applyVar)) args' =<< generateExpr function
+          flip (foldM (Subst.two makeApply)) args' =<< generateExpr function
 
 
-applyVar :: Core.Literal -> Core.Literal -> Core.Expr
-applyVar var argument =
-  case var of
-    Core.Literal (Core.Var name) ->
-      Core.Apply Core.VarRef name [argument]
+makeApply :: Core.Literal -> Core.Literal -> Core.Expr
+makeApply var argument =
+  Core.Apply var [argument]
 
-    _ ->
-      error
-        "This is an impossible apply \
-        \ - trying to call a tuple, list, or literal."
+
+makeFun :: [Text.Text] -> Core.Expr -> Core.Expr
+makeFun args body =
+  foldr (\a -> Core.Fun [a]) body args
+
+
+
+-- RECORDS
+
+
+keys :: [(Text.Text, a)] -> [Core.Literal]
+keys =
+  map (Core.LTerm . Core.Atom . fst)

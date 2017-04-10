@@ -1,7 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Generate.ErlangCore.Constant
-  ( literal
-  ) where
+module Generate.CoreErlang.Literal (term) where
 
 import Data.Text (Text)
 import qualified Data.Text.Encoding as Encoding
@@ -10,11 +8,11 @@ import qualified Data.Char as Char
 import qualified Numeric
 
 import qualified AST.Literal as Literal
-import qualified Generate.ErlangCore.Builder as Core
+import qualified Generate.CoreErlang.Builder as Core
 
 
-literal :: Literal.Literal -> Core.Constant a
-literal literal =
+term :: Literal.Literal -> Core.Term
+term literal =
   case literal of
     Literal.Chr c ->
       Core.Char (Text.head (unescape c))

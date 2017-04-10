@@ -1,9 +1,9 @@
 {-# OPTIONS_GHC -Wall #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Generate.ErlangCore.Builder
-  ( Expr(..), Literal(..), Ref(..), Constant(..)
-  , Clause(..), Pattern(..)
-  , Function(..)
+module Generate.CoreErlang.Builder
+  ( Function(..)
+  , Expr(..), Literal(..), Pattern(..)
+  , Term(..)
   , encodeUtf8
   )
   where
@@ -22,26 +22,38 @@ import qualified Data.Char as Char
 -- AST
 
 
+data Function
+  = Function Text [Text] Expr -- 'f'/0 = fun () -> ...
+
+
 data Expr
-  = C Literal
-  | Apply Ref Text [Literal] -- apply 'f'/0 ()
+  = Lit Literal
+  | Map [(Literal, Literal)] -- ~{ 'a' => 1 }~
+  | Update [(Literal, Literal)] Literal -- ~{ 'a' := 1 | _map }~
+  | Apply Literal [Literal] -- apply _f ()
   | Call Text Text [Literal] -- call 'module':'f' ()
-  | Case Literal [Clause] -- case <_cor0> of ...
+  | Case Literal [(Pattern, Expr)] -- case <_cor0> of ...
   | Let Text Expr Expr -- let <_cor0> = 23 in ...
   | LetRec Text [Text] Expr Expr -- letrec 'foo'/0 = fun () -> ... in ...
   | Fun [Text] Expr -- fun () -> ...
 
 
 data Literal
-  = Literal (Constant Literal)
+  = LTerm Term
+  | LTuple [Literal]
+  | LCons Literal Literal
+  | LFunction Text Int
 
 
-data Ref
-  = VarRef -- _f
-  | FunctionRef -- 'f'/1
+data Pattern
+  = PTerm Term
+  | PAlias Text Pattern
+  | PMap [(Pattern, Pattern)]
+  | PTuple [Pattern]
+  | PCons Pattern Pattern
 
 
-data Constant context
+data Term
   = Int Int
   | Char Char
   | Float Double
@@ -49,26 +61,7 @@ data Constant context
   | Var Text
   | Anything
   | BitString ByteString
-  | Tuple [context]
-  | Cons context context
   | Nil
-
-
-data Pattern
-  = Pattern (Constant Pattern)
-  | Alias Text Pattern
-
-
-data Clause
-  = Clause
-    { _pattern :: Pattern
-    , _guard :: Expr
-    , _body :: Expr
-    }
-
-
-data Function
-  = Function Text [Text] Expr -- 'f'/0 = fun () -> ...
 
 
 
@@ -84,8 +77,19 @@ fromFunction :: Function -> Builder
 fromFunction function =
   case function of
     Function name args body ->
-      fromFunctionName name args <> " = "
+      fromFunctionName name (length args) <> " = "
       <> fromFun args "" body <> "\n"
+
+
+fromFunctionName :: Text -> Int -> Builder
+fromFunctionName name airity =
+  quoted name <> "/" <> intDec airity
+
+
+fromFun :: [Text] -> Builder -> Expr -> Builder
+fromFun args indent body =
+  "fun (" <> commaSep safeVar args <> ") ->\n"
+  <> deeper indent <> fromExpr (deeper indent) body
 
 
 
@@ -95,15 +99,25 @@ fromFunction function =
 fromExpr :: Builder -> Expr -> Builder
 fromExpr indent expression =
   case expression of
-    C literal ->
+    Lit literal ->
       fromLiteral literal
 
-    Apply VarRef name args ->
-      "apply " <> safeVar name
-      <> " (" <> commaSep fromLiteral args <> ")"
+    Map pairs ->
+      let
+        fromPair (key, value) =
+          fromLiteral key <> " => " <> fromLiteral value
+      in
+        "~{" <> commaSep fromPair pairs <> "}~"
 
-    Apply FunctionRef name args ->
-      "apply " <> fromFunctionName name args
+    Update pairs var ->
+      let
+        fromPair (key, value) =
+          fromLiteral key <> " := " <> fromLiteral value
+      in
+        "~{" <> commaSep fromPair pairs <> " | " <> fromLiteral var <> "}~"
+
+    Apply name args ->
+      "apply " <> fromLiteral name
       <> " (" <> commaSep fromLiteral args <> ")"
 
     Call moduleName functionName args ->
@@ -113,13 +127,13 @@ fromExpr indent expression =
 
     Case switch clauses ->
       let
-        clause (Clause pattern guard body) =
+        fromClause (pattern, body) =
           "\n" <> deeper indent <> "<" <> fromPattern pattern
-          <> "> when " <> fromExpr indent guard <> " ->\n"
+          <> "> when 'true' ->\n"
           <> deeper (deeper indent) <> fromExpr (deeper (deeper indent)) body
       in
         "case " <> fromLiteral switch <> " of"
-        <> mconcat (map clause clauses)
+        <> mconcat (map fromClause clauses)
         <> "\n" <> indent <> "end"
 
     Let var binding body ->
@@ -129,7 +143,7 @@ fromExpr indent expression =
       <> deeper indent <> fromExpr (deeper indent) body
 
     LetRec name args binding body ->
-      "letrec " <> fromFunctionName name args <> " =\n"
+      "letrec " <> fromFunctionName name (length args) <> " =\n"
       <> deeper indent <> fromFun args (deeper indent) binding <> "\n"
       <> indent <> "in\n"
       <> deeper indent <> fromExpr (deeper indent) body
@@ -139,22 +153,46 @@ fromExpr indent expression =
 
 
 fromLiteral :: Literal -> Builder
-fromLiteral (Literal constant) =
-  fromConstant fromLiteral constant
+fromLiteral literal =
+  case literal of
+    LTerm term ->
+      fromTerm term
+
+    LTuple values ->
+      "{" <> commaSep fromLiteral values <> "}"
+
+    LCons first rest ->
+      "[" <> fromLiteral first <> "|" <> fromLiteral rest <> "]"
+
+    LFunction name airity ->
+      fromFunctionName name airity
 
 
 fromPattern :: Pattern -> Builder
 fromPattern pattern =
   case pattern of
-    Pattern constant ->
-      fromConstant fromPattern constant
+    PTerm constant ->
+      fromTerm constant
 
-    Alias name p ->
+    PAlias name p ->
       safeVar name <> " = " <> fromPattern p
 
+    PMap pairs ->
+      let
+        fromPair (key, value) =
+          fromPattern key <> " := " <> fromPattern value
+      in
+      "~{" <> commaSep fromPair pairs <> "}~"
 
-fromConstant :: (a -> Builder) -> Constant a -> Builder
-fromConstant buildContext constant =
+    PTuple values ->
+      "{" <> commaSep fromPattern values <> "}"
+
+    PCons first rest ->
+      "[" <> fromPattern first <> "|" <> fromPattern rest <> "]"
+
+
+fromTerm :: Term -> Builder
+fromTerm constant =
   case constant of
     Int n ->
       intDec n
@@ -181,25 +219,8 @@ fromConstant buildContext constant =
       in
         "#{" <> commaSep id (ByteString.foldr collectWord [] str) <> "}#"
 
-    Tuple inners ->
-      "{" <> commaSep buildContext inners <> "}"
-
-    Cons first rest ->
-      "[" <> buildContext first <> "|" <> buildContext rest <> "]"
-
     Nil ->
       "[]"
-
-
-fromFunctionName :: Text -> [a] -> Builder
-fromFunctionName name args =
-  quoted name <> "/" <> intDec (length args)
-
-
-fromFun :: [Text] -> Builder -> Expr -> Builder
-fromFun args indent body =
-  "fun (" <> commaSep safeVar args <> ") ->\n"
-  <> deeper indent <> fromExpr (deeper indent) body
 
 
 

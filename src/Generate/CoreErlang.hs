@@ -154,10 +154,7 @@ generateExpr opt =
         "Shaders can't be used with the BEAM compiler!"
 
     Opt.Crash _moduleName _region _maybeExpr ->
-      error
-        "TODO: Opt.Crash to Core.Expr"
-
-
+        return $ (BuiltIn.crash "unexpected value")
 
 --- VARIABLES
 
@@ -266,7 +263,6 @@ generateBinop (Var.Canonical home name) =
 
 
 -- RECORDS
-
 
 generateKeys :: [(Text, a)] -> [Core.Literal]
 generateKeys =

@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Generate.CoreErlang.BuiltIn
-  ( get, element, effect, apply
+  ( get, element, effect, apply, crash
   ) where
 
 import Data.Text as Text
 
 import qualified AST.Module.Name as ModuleName
+
 import Generate.CoreErlang.Builder as Core
 
 
@@ -31,3 +32,8 @@ effect moduleName =
 apply :: Core.Literal -> [Core.Literal] -> Core.Expr
 apply function args =
   Core.Call "Runtime" "apply" (function : args)
+
+crash :: Text -> Core.Expr
+crash reason =
+  Core.Fun [reason]
+    $ Core.Call "erlang" "throw" [Core.LTerm (Var reason)]

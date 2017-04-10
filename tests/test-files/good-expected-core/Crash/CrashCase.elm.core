@@ -1,0 +1,12 @@
+'elm_lang@core@Main@test'/0 = fun () ->
+	fun (_x) ->
+		case _x of
+			<1> when 'true' ->
+				2
+			<__p0 = _1> when 'true' ->
+				let <_2> =
+					fun (_unexpected value) ->
+						call 'erlang':'throw' (_unexpected value)
+				in
+					apply _2 (#{#<117>(8,1,'integer',['unsigned'|['big']]), #<110>(8,1,'integer',['unsigned'|['big']]), #<101>(8,1,'integer',['unsigned'|['big']]), #<120>(8,1,'integer',['unsigned'|['big']]), #<112>(8,1,'integer',['unsigned'|['big']]), #<101>(8,1,'integer',['unsigned'|['big']]), #<99>(8,1,'integer',['unsigned'|['big']]), #<116>(8,1,'integer',['unsigned'|['big']]), #<101>(8,1,'integer',['unsigned'|['big']]), #<100>(8,1,'integer',['unsigned'|['big']]), #<32>(8,1,'integer',['unsigned'|['big']]), #<118>(8,1,'integer',['unsigned'|['big']]), #<97>(8,1,'integer',['unsigned'|['big']]), #<108>(8,1,'integer',['unsigned'|['big']]), #<117>(8,1,'integer',['unsigned'|['big']]), #<101>(8,1,'integer',['unsigned'|['big']])}#)
+		end

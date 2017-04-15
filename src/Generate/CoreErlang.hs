@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Generate.CoreErlang (generate) where
 
-import Control.Monad (foldM, liftM2)
+import Control.Monad (liftM2)
 import qualified Control.Monad.State as State
 
 import qualified Data.ByteString.Builder as BS
@@ -11,10 +11,10 @@ import qualified AST.Module as Module
 import qualified AST.Module.Name as ModuleName
 import qualified AST.Variable as Var
 import qualified AST.Expression.Optimized as Opt
-import Elm.Compiler.Module (moduleToText, qualifiedVar)
 
 import qualified Generate.CoreErlang.Builder as Core
 import qualified Generate.CoreErlang.BuiltIn as BuiltIn
+import qualified Generate.CoreErlang.Function as Function
 import qualified Generate.CoreErlang.Literal as Literal
 import qualified Generate.CoreErlang.Substitution as Subst
 import qualified Generate.CoreErlang.Pattern as Pattern
@@ -22,12 +22,10 @@ import qualified Generate.CoreErlang.Pattern as Pattern
 
 generate :: Module.Module (Module.Info [Opt.Def]) -> BS.Builder
 generate (Module.Module moduleName _path info) =
-  let
-    function name =
-      Core.Function (qualifiedVar moduleName name) []
-  in
-    Core.encodeUtf8 $
-      map (flip State.evalState 1 . generateDef function) (Module.program info)
+  Core.encodeUtf8 $
+    map
+      (flip State.evalState 1 . generateDef (Function.topLevel moduleName))
+      (Module.program info)
 
 
 generateDef :: (Text.Text -> Core.Expr -> a) -> Opt.Def -> State.State Int a
@@ -42,7 +40,7 @@ generateDef gen def =
 
           let letRec =
                 Core.LetRec name args body'
-                  $ makeFun args
+                  $ Function.anonymous args
                   $ Core.Apply (Core.LFunction name (length args))
                   $ map (Core.LTerm . Core.Var) args
 
@@ -65,7 +63,7 @@ generateExpr opt =
       generateCall (Opt.Var var) [lhs, rhs]
 
     Opt.Function args body ->
-      makeFun args <$> generateExpr body
+      Function.anonymous args <$> generateExpr body
 
     Opt.Call function args ->
       generateCall function args
@@ -120,7 +118,9 @@ generateExpr opt =
     Opt.Update record fields ->
       let
         zipper literals =
-          Core.Update (zip (keys fields) (tail literals)) (head literals)
+          Core.Update
+            (zip (generateKeys fields) (tail literals))
+            (head literals)
       in
         Subst.many zipper =<< mapM generateExpr (record : map snd fields)
 
@@ -128,15 +128,13 @@ generateExpr opt =
       do  values <-
             mapM (generateExpr . snd) fields
 
-          Subst.many (Core.Map . zip (keys fields)) values
+          Subst.many (Core.Map . zip (generateKeys fields)) values
 
-    Opt.Cmd _moduleName ->
-      error
-        "TODO: Opt.Cmd to Core.Expr"
+    Opt.Cmd moduleName ->
+      return $ BuiltIn.effect moduleName
 
-    Opt.Sub _moduleName ->
-      error
-        "TODO: Opt.Sub to Core.Expr"
+    Opt.Sub moduleName ->
+      return $ BuiltIn.effect moduleName
 
     Opt.OutgoingPort _name _type ->
       error
@@ -166,53 +164,42 @@ generateExpr opt =
 
 generateVar :: Var.Canonical -> Core.Expr
 generateVar (Var.Canonical home name) =
-  let
-    reference moduleName =
-      Core.Apply (Core.LFunction (qualifiedVar moduleName name) 0) []
-  in
-    case home of
-      Var.Local ->
-        Core.Lit (Core.LTerm (Core.Var name))
+  case home of
+    Var.Local ->
+      Core.Lit (Core.LTerm (Core.Var name))
 
-      Var.Module moduleName ->
-        reference moduleName
+    Var.Module moduleName ->
+      Function.reference moduleName name
 
-      Var.TopLevel moduleName ->
-        reference moduleName
+    Var.TopLevel moduleName ->
+      Function.reference moduleName name
 
-      Var.BuiltIn ->
-        error
-          "Will go away when merged with upstream dev."
+    Var.BuiltIn ->
+      error
+        "Will go away when merged with upstream dev."
 
 
 generateCall :: Opt.Expr -> [Opt.Expr] -> State.State Int Core.Expr
 generateCall function args =
-  do  args' <-
-        mapM generateExpr args
+  case function of
+    Opt.Var (Var.Canonical (Var.Module moduleName) name)
+      | ModuleName.canonicalIsNative moduleName ->
+      Function.nativeCall moduleName name =<< mapM generateExpr args
 
-      case function of
-        Opt.Var (Var.Canonical (Var.Module moduleName) name)
-          | ModuleName.canonicalIsNative moduleName ->
-          Subst.many (Core.Call (moduleToText moduleName) name) args'
+    _ ->
+      do  function' <-
+            generateExpr function
 
-        _ ->
-          flip (foldM (Subst.two makeApply)) args' =<< generateExpr function
+          args' <-
+            mapM generateExpr args
 
-
-makeApply :: Core.Literal -> Core.Literal -> Core.Expr
-makeApply var argument =
-  Core.Apply var [argument]
-
-
-makeFun :: [Text.Text] -> Core.Expr -> Core.Expr
-makeFun args body =
-  foldr (\a -> Core.Fun [a]) body args
+          Function.apply function' args'
 
 
 
 -- RECORDS
 
 
-keys :: [(Text.Text, a)] -> [Core.Literal]
-keys =
+generateKeys :: [(Text.Text, a)] -> [Core.Literal]
+generateKeys =
   map (Core.LTerm . Core.Atom . fst)

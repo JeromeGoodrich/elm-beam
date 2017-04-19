@@ -1,4 +1,4 @@
-'elm_lang@core@Main@infiniteCountDown'/0 = fun () ->
+'elm_lang@core@Main@infiniteCountDown'/2 = fun (_n, _x) ->
 	letrec 'infiniteCountDown'/2 =
 		fun (_n, _x) ->
 			case _n of
@@ -8,6 +8,4 @@
 					apply 'infiniteCountDown'/2 (_n, _x)
 			end
 	in
-		fun (_n) ->
-			fun (_x) ->
-				apply 'infiniteCountDown'/2 (_n, _x)
+		apply 'infiniteCountDown'/2 (_n, _x)

@@ -2,78 +2,81 @@
 module Generate.CoreErlang (generate) where
 
 import Control.Monad (liftM2)
-import qualified Control.Monad.State as State
 
 import qualified Data.ByteString.Builder as BS
 import qualified Data.Text as Text
+import Data.Text (Text)
 
 import qualified AST.Module as Module
 import qualified AST.Module.Name as ModuleName
 import qualified AST.Variable as Var
 import qualified AST.Expression.Optimized as Opt
+import Elm.Compiler.Module (qualifiedVar)
 
 import qualified Generate.CoreErlang.Builder as Core
 import qualified Generate.CoreErlang.BuiltIn as BuiltIn
-import qualified Generate.CoreErlang.Function as Function
+import qualified Generate.CoreErlang.Environment as Env
 import qualified Generate.CoreErlang.Literal as Literal
 import qualified Generate.CoreErlang.Substitution as Subst
 import qualified Generate.CoreErlang.Pattern as Pattern
 
 
-generate :: Module.Module (Module.Info [Opt.Def]) -> BS.Builder
-generate (Module.Module moduleName _path info) =
-  Core.encodeUtf8 $
-    map
-      (flip State.evalState 1 . generateDef (Function.topLevel moduleName))
+generate
+  :: Module.Interfaces
+  -> Module.Module (Module.Info [Opt.Def])
+  -> BS.Builder
+generate interfaces (Module.Module moduleName _ info) =
+  let
+    topLevel name args body =
+      Core.Function (qualifiedVar moduleName name) args <$> generateExpr body
+  in
+    Core.encodeUtf8 $ map
+      (Env.run moduleName interfaces . generateDef topLevel)
       (Module.program info)
 
 
-generateDef :: (Text.Text -> Core.Expr -> a) -> Opt.Def -> State.State Int a
+generateDef :: (Text -> [Text] -> Opt.Expr -> a) -> Opt.Def -> a
 generateDef gen def =
-  case def of
-    Opt.Def _ name body ->
-      gen name <$> generateExpr body
+    case def of
+      Opt.Def _ name (Opt.Function args body) ->
+        gen name args body
 
-    Opt.TailDef _ name args body ->
-      do  body' <-
-            generateExpr body
+      Opt.Def _ name body ->
+        gen name [] body
 
-          let letRec =
-                Core.LetRec name args body'
-                  $ Function.anonymous args
-                  $ Core.Apply (Core.LFunction name (length args))
-                  $ map (Core.LTerm . Core.Var) args
-
-          return (gen name letRec)
+      Opt.TailDef _ name args body ->
+        gen name args body
 
 
-generateExpr :: Opt.Expr -> State.State Int Core.Expr
+generateExpr :: Opt.Expr -> Env.Gen Core.Expr
 generateExpr opt =
   case opt of
     Opt.Literal lit ->
       return $ Core.Lit (Core.LTerm (Literal.term lit))
 
     Opt.Var var ->
-      return $ generateVar var
+      generateVar var
 
     Opt.List exprs ->
       Pattern.list =<< mapM generateExpr exprs
 
     Opt.Binop var lhs rhs ->
-      generateCall (Opt.Var var) [lhs, rhs]
+      generateBinop var =<< mapM generateExpr [lhs, rhs]
 
     Opt.Function args body ->
-      Function.anonymous args <$> generateExpr body
+      Core.Fun args <$> generateExpr body
 
     Opt.Call function args ->
-      generateCall function args
+      generateCall function =<< mapM generateExpr args
 
     Opt.TailCall name _ args ->
-      let
-        function =
-          Core.LFunction name (length args)
-      in
-        Subst.many (Core.Apply function) =<< mapM generateExpr args
+      do  moduleName <-
+            Env.getModuleName
+
+          let function =
+                Core.LFunction (qualifiedVar moduleName name) (length args)
+
+          Subst.many (Core.Apply function) =<< mapM generateExpr args
 
     Opt.If branches finally ->
       let
@@ -91,11 +94,8 @@ generateExpr opt =
       in
         foldr toCase (generateExpr finally) branches
 
-    Opt.Let defs body ->
-      foldr
-        (\def state -> generateDef Core.Let def <*> state)
-        (generateExpr body)
-        defs
+    Opt.Let defs expr ->
+      generateLet defs expr
 
     Opt.Case switch branches ->
       do  let toCore (pattern, expr) =
@@ -116,13 +116,13 @@ generateExpr opt =
       Subst.one (BuiltIn.get field) =<< generateExpr record
 
     Opt.Update record fields ->
-      let
-        zipper literals =
-          Core.Update
-            (zip (generateKeys fields) (tail literals))
-            (head literals)
-      in
-        Subst.many zipper =<< mapM generateExpr (record : map snd fields)
+      do  let zipper m entries =
+                Core.Update (zip (generateKeys fields) entries) m
+
+          record' <-
+            generateExpr record
+
+          Subst.many1 zipper record' =<< mapM (generateExpr . snd) fields
 
     Opt.Record fields ->
       do  values <-
@@ -149,7 +149,7 @@ generateExpr opt =
       generateExpr expr
 
     Opt.GLShader _ _ _ ->
-      -- TODO: should likely remove this from the AST
+      -- TODO: remove this from the AST
       error
         "Shaders can't be used with the BEAM compiler!"
 
@@ -159,47 +159,115 @@ generateExpr opt =
 
 
 
--- VARIABLES
+--- VARIABLES
 
 
-generateVar :: Var.Canonical -> Core.Expr
+generateVar :: Var.Canonical -> Env.Gen Core.Expr
 generateVar (Var.Canonical home name) =
   case home of
     Var.Local ->
-      Core.Lit (Core.LTerm (Core.Var name))
+      do  arity <-
+            Env.getLocalArity name
+
+          return $ maybe
+            (Core.Lit (Core.LTerm (Core.Var name)))
+            (generateFunction name)
+            arity
 
     Var.Module moduleName ->
-      Function.reference moduleName name
+      generateRef moduleName name
 
     Var.TopLevel moduleName ->
-      Function.reference moduleName name
+      generateRef moduleName name
 
     Var.BuiltIn ->
       error
         "Will go away when merged with upstream dev."
 
 
-generateCall :: Opt.Expr -> [Opt.Expr] -> State.State Int Core.Expr
+generateCall :: Opt.Expr -> [Core.Expr] -> Env.Gen Core.Expr
 generateCall function args =
   case function of
     Opt.Var (Var.Canonical (Var.Module moduleName) name)
       | ModuleName.canonicalIsNative moduleName ->
-      Function.nativeCall moduleName name =<< mapM generateExpr args
+      generateNative moduleName name args
 
     _ ->
       do  function' <-
             generateExpr function
 
-          args' <-
-            mapM generateExpr args
+          case function' of
+            Core.Lit f@(Core.LFunction _ arity)
+              | arity == length args ->
+              Subst.many (Core.Apply f) args
 
-          Function.apply function' args'
+            _ ->
+              Subst.many1 BuiltIn.apply function' args
+
+
+generateRef :: ModuleName.Canonical -> Text -> Env.Gen Core.Expr
+generateRef moduleName name =
+  if ModuleName.canonicalIsNative moduleName then
+    generateNative moduleName name []
+
+  else
+    do  arity <-
+          Env.getGlobalArity moduleName name
+
+        return $ generateFunction (qualifiedVar moduleName name) arity
+
+
+generateFunction :: Text -> Int -> Core.Expr
+generateFunction name arity =
+  if arity == 0 then
+    Core.Apply (Core.LFunction name arity) []
+
+  else
+    Core.Lit (Core.LFunction name arity)
+
+
+generateNative
+  :: ModuleName.Canonical
+  -> Text
+  -> [Core.Expr]
+  -> Env.Gen Core.Expr
+generateNative (ModuleName.Canonical _ rawModule) name =
+  Subst.many (Core.Call (Text.drop 7 rawModule) name)
+
+
+generateLet :: [Opt.Def] -> Opt.Expr -> Env.Gen Core.Expr
+generateLet defs expr =
+  do  let pieces = map (generateDef (,,)) defs
+      mapM_ putArity pieces
+      context <- generateExpr expr
+      functions <- mapM pieceToFunction pieces
+      return $ Core.LetRec functions context
+
+  where
+    putArity (name, args, _) =
+      Env.putLocalArity name (length args)
+
+    pieceToFunction (name, args, body) =
+      Core.Function name args <$> generateExpr body
+
+
+generateBinop :: Var.Canonical -> [Core.Expr] -> Env.Gen Core.Expr
+generateBinop (Var.Canonical home name) =
+  Subst.many (Core.Apply (Core.LFunction qualified 2))
+
+  where
+    qualified =
+      case home of
+        Var.Local -> error "Will go away when merged with upstream dev"
+        Var.Module moduleName -> qualifiedVar moduleName name
+        Var.TopLevel moduleName -> qualifiedVar moduleName name
+        Var.BuiltIn -> error "Will go away when merged with upstream dev"
 
 
 
 -- RECORDS
 
 
-generateKeys :: [(Text.Text, a)] -> [Core.Literal]
+generateKeys :: [(Text, a)] -> [Core.Literal]
 generateKeys =
   map (Core.LTerm . Core.Atom . fst)

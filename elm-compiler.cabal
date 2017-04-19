@@ -7,8 +7,6 @@ License-file: LICENSE
 
 Category: Compiler, Language
 
-Extra-source-files: changelog.md
-
 Cabal-version: >=1.9
 Build-type: Simple
 
@@ -64,10 +62,10 @@ Library
         Generate.CoreErlang,
         Generate.CoreErlang.BuiltIn,
         Generate.CoreErlang.Builder,
+        Generate.CoreErlang.Environment,
         Generate.CoreErlang.Literal,
         Generate.CoreErlang.Pattern,
         Generate.CoreErlang.Substitution,
-        Generate.CoreErlang.Function,
         Nitpick.Pattern,
         Nitpick.PatternMatches,
         Nitpick.TopLevelTypes,
@@ -186,10 +184,10 @@ Test-Suite compiler-tests
         Generate.CoreErlang
         Generate.CoreErlang.BuiltIn
         Generate.CoreErlang.Builder
+        Generate.CoreErlang.Environment
         Generate.CoreErlang.Literal
         Generate.CoreErlang.Pattern
         Generate.CoreErlang.Substitution
-        Generate.CoreErlang.Function
         Nitpick.Pattern
         Nitpick.PatternMatches
         Nitpick.TopLevelTypes
